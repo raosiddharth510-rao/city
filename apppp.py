@@ -1,187 +1,190 @@
+# City Mobility & Traffic Insights Platform
+
 import streamlit as st
 import pandas as pd
 import numpy as np
+import matplotlib.pyplot as plt
+import seaborn as sns
 import re
-import plotly.express as px
-import plotly.graph_objects as go
-import altair as alt
 
-# ----------------------------------------------------------
-# PAGE CONFIG
-# ----------------------------------------------------------
-st.set_page_config(page_title="Traffic-Pollution Dashboard",
-                   layout="wide",
-                   initial_sidebar_state="expanded")
+# ============================
+# Helper Functions
+# ============================
 
-# ----------------------------------------------------------
-# SIDEBAR NAVIGATION
-# ----------------------------------------------------------
-st.sidebar.title("Navigation")
-page = st.sidebar.radio(
-    "Go to:",
-    [
-        "Overview",
-        "Transport Mode Insights",
-        "Weather Impact Analysis",
-        "Data Explorer"
-    ]
-)
-
-# ----------------------------------------------------------
-# LOAD DATA FUNCTION
-# ----------------------------------------------------------
-@st.cache_data
-def load_data():
-    """
-    Load and clean dataset. Replace this with your dataset path.
-    """
+def extract_numeric(value):
     try:
-        df = pd.read_csv("traffic_pollution.csv")
+        if isinstance(value, str):
+            cleaned = re.sub(r"[^0-9.-]", "", value)
+            return float(cleaned) if cleaned else np.nan
+        return float(value)
+    except:
+        return np.nan
 
-        # --- CLEANING ---
-        df.columns = df.columns.str.strip()
+# ============================
+# Streamlit App
+# ============================
+st.title("🚦 City Mobility Insights Platform (Traffic + Road Classification)")
 
-        # Remove unwanted chars using regex
-        df["location"] = df["location"].astype(str).apply(lambda x: re.sub(r"[^A-Za-z0-9 ]", "", x))
+st.markdown("""
+This dashboard performs:
 
-        # Convert datetime
-        df["timestamp"] = pd.to_datetime(df["timestamp"], errors="coerce")
+- *Vehicle Speed Trends*
+- *Hourly Traffic Insight*
+- *Vehicle Type Distribution*
+- *Road-Type Impact Analysis*
+- *Worst-Time Analysis by Weather*
+- *Worst-Area Analysis by Incident Type*
+""")
 
-        # Feature Engineering
-        df["hour"] = df["timestamp"].dt.hour
-        df["date"] = df["timestamp"].dt.date
-        df["day"] = df["timestamp"].dt.day_name()
-        df["is_rain"] = np.where(df["rain"] > 0, 1, 0)
+# ----------------------------
+# Upload Section
+# ----------------------------
+st.sidebar.header("Upload Dataset")
+file = st.sidebar.file_uploader("Upload CSV File", type=["csv"])
 
-        return df
+def load_data(file):
+    df = pd.read_csv(file)
+    return df
 
-    except Exception as e:
-        st.error(f"❌ Error loading dataset: {e}")
-        return pd.DataFrame()
-
-
-# ----------------------------------------------------------
-# LOAD DATA
-# ----------------------------------------------------------
-df = load_data()
-
-if df.empty:
-    st.warning("Dataset not found. Upload using Data Explorer.")
+if file:
+    df = load_data(file)
 else:
-    st.success("Dataset Loaded Successfully!")
+    st.warning("Please upload the dataset to continue.")
+    st.stop()
 
-# ----------------------------------------------------------
-# PAGE 1: OVERVIEW
-# ----------------------------------------------------------
-if page == "Overview":
-    st.title("🚦 Traffic & Pollution Overview")
+st.success("Dataset Loaded Successfully!")
 
-    col1, col2, col3, col4 = st.columns(4)
+# ============================
+# Data Cleaning
+# ============================
+st.header("🔧 Data Cleaning & Processing")
 
-    col1.metric("Avg Traffic Count", round(df["traffic_count"].mean(), 2))
-    col2.metric("Avg PM2.5", round(df["pm25"].mean(), 2))
-    col3.metric("Avg NO₂", round(df["no2"].mean(), 2))
-    col4.metric("Avg Temperature (°C)", round(df["temperature"].mean(), 2))
+numeric_like_cols = [c for c in df.columns if any(x in c.lower() for x in ["speed", "kmph", "level", "count"])]
+for col in numeric_like_cols:
+    df[col] = df[col].apply(extract_numeric)
 
-    st.subheader("📈 Traffic vs Pollution (Correlation)")
-    fig_scatter = px.scatter(
-        df,
-        x="traffic_count",
-        y="pm25",
-        color="temperature",
-        trendline="ols",
-        title="Traffic Count vs PM2.5"
-    )
-    st.plotly_chart(fig_scatter, use_container_width=True)
+# Detect datetime
+datetime_cols = [c for c in df.columns if "date" in c.lower() or "time" in c.lower()]
+for col in datetime_cols:
+    df[col] = pd.to_datetime(df[col], errors="coerce")
 
-    st.subheader("⏳ Hourly Traffic Pattern")
-    hourly_df = df.groupby("hour")["traffic_count"].mean().reset_index()
-    fig_hourly = px.line(hourly_df, x="hour", y="traffic_count", markers=True)
-    st.plotly_chart(fig_hourly, use_container_width=True)
+if datetime_cols:
+    dtcol = datetime_cols[0]
+    if pd.api.types.is_datetime64_any_dtype(df[dtcol]):
+        df["hour"] = df[dtcol].dt.hour
+        df["day"] = df[dtcol].dt.date
+    else:
+        df["hour"] = pd.NA
+else:
+    df["hour"] = pd.NA
 
-    st.subheader("🌍 Area-wise Pollution")
-    area_df = df.groupby("location")[["pm25", "pm10", "no2", "co"]].mean().reset_index()
-    fig_area = px.bar(area_df, x="location", y="pm25", title="Area-wise PM2.5")
-    st.plotly_chart(fig_area, use_container_width=True)
+# Detect columns
+area_col, road_type_col, weather_col, incident_col = None, None, None, None
 
+for col in df.columns:
+    if "area" in col.lower() or "location" in col.lower():
+        area_col = col
+    if "road" in col.lower():
+        road_type_col = col
+    if "weather" in col.lower():
+        weather_col = col
+    if "incident" in col.lower() or "accident" in col.lower() or "event" in col.lower():
+        incident_col = col
 
-# ----------------------------------------------------------
-# PAGE 2: TRANSPORT MODE INSIGHTS
-# ----------------------------------------------------------
-elif page == "Transport Mode Insights":
-    st.title("🚗 Transport Mode Insights")
+# Speed Column
+speed_col = None
+for col in df.columns:
+    if "speed" in col.lower() or "kmph" in col.lower():
+        speed_col = col
+        break
 
-    mode_df = df.groupby("mode")["traffic_count"].sum().reset_index()
-    fig_mode = px.pie(mode_df, names="mode", values="traffic_count",
-                      title="Transport Mode Contribution")
-    st.plotly_chart(fig_mode, use_container_width=True)
+hour_col = "hour"
 
-    st.subheader("Mode-wise Pollution Impact")
-    mode_poll = df.groupby("mode")[["pm25", "pm10", "no2", "co"]].mean().reset_index()
-    fig_mode_poll = px.bar(
-        mode_poll,
-        x="mode",
-        y=["pm25", "pm10", "no2", "co"],
-        barmode="group",
-        title="Pollution Contribution by Transport Mode"
-    )
-    st.plotly_chart(fig_mode_poll, use_container_width=True)
+st.write(df.head())
 
+# ============================
+# Section 1 — Speed vs Hour
+# ============================
+st.header("📊 Vehicle Speed vs Hour")
 
-# ----------------------------------------------------------
-# PAGE 3: WEATHER IMPACT ANALYSIS
-# ----------------------------------------------------------
-elif page == "Weather Impact Analysis":
-    st.title("⛈ Weather Impact on Traffic & Pollution")
+if speed_col and hour_col:
+    fig, ax = plt.subplots()
+    ax.scatter(df[hour_col], df[speed_col], alpha=0.5)
+    ax.set_xlabel("Hour")
+    ax.set_ylabel("Speed (kmph)")
+    ax.set_title("Hourly Vehicle Speed Trend")
+    st.pyplot(fig)
 
-    st.subheader("Does Rain Reduce Traffic?")
-    rain_traffic = df.groupby("is_rain")["traffic_count"].mean().reset_index()
-    rain_traffic["Rain"] = rain_traffic["is_rain"].map({0: "No Rain", 1: "Rain"})
+# ============================
+# Section 2 — Vehicle Type
+# ============================
+st.header("🚗 Vehicle Type Insights")
 
-    fig_rain = px.bar(
-        rain_traffic,
-        x="Rain",
-        y="traffic_count",
-        title="Traffic During Rain vs No Rain"
-    )
-    st.plotly_chart(fig_rain, use_container_width=True)
+vehicle_type_col = None
+for col in df.columns:
+    if "vehicle" in col.lower() or "type" in col.lower():
+        vehicle_type_col = col
 
-    st.subheader("Rain vs Pollution Levels")
-    rain_poll = df.groupby("is_rain")[["pm25", "pm10"]].mean().reset_index()
-    rain_poll["Rain"] = rain_poll["is_rain"].map({0: "No Rain", 1: "Rain"})
+if vehicle_type_col:
+    st.bar_chart(df[vehicle_type_col].value_counts())
 
-    fig_rain_poll = px.bar(
-        rain_poll,
-        x="Rain",
-        y=["pm25", "pm10"],
-        barmode="group",
-        title="Pollution During Rain vs No Rain"
-    )
-    st.plotly_chart(fig_rain_poll, use_container_width=True)
+# ============================
+# Section 3 — Road-Type Impact
+# ============================
+st.header("🛣 Road Type Impact Analysis")
 
+if road_type_col and speed_col:
+    fig, ax = plt.subplots()
+    sns.boxplot(x=df[road_type_col], y=df[speed_col], ax=ax)
+    ax.set_title("Speed Variation by Road Type")
+    st.pyplot(fig)
 
-# ----------------------------------------------------------
-# PAGE 4: DATA EXPLORER
-# ----------------------------------------------------------
-elif page == "Data Explorer":
-    st.title("📂 Data Explorer")
+# ============================
+# Section 4 — Worst Time & Area (Speed Heatmap)
+# ============================
+st.header("🔥 Worst Time & Area (Speed Heatmap)")
 
-    st.write("Upload CSV to analyze")
+if speed_col and area_col:
+    pivot = df.pivot_table(values=speed_col, index="hour", columns=area_col, aggfunc="mean").fillna(0)
 
-    uploaded = st.file_uploader("Upload CSV", type=["csv"])
+    fig, ax = plt.subplots(figsize=(12, 6))
+    sns.heatmap(pivot, ax=ax)
+    ax.set_title("Speed Drop Heatmap (Hour × Area)")
+    st.pyplot(fig)
 
-    if uploaded:
-        user_df = pd.read_csv(uploaded)
-        st.success("File uploaded successfully!")
-        st.dataframe(user_df.head())
+# ============================
+# NEW — Worst Time by Weather
+# ============================
+st.header("🌧 Worst Time Analysis by Weather Condition")
 
-        st.subheader("Columns Summary")
-        st.write(user_df.describe())
+if weather_col and speed_col:
+    pivot_w = df.pivot_table(values=speed_col, index="hour", columns=weather_col, aggfunc="mean").fillna(0)
 
-        st.subheader("Quick Chart")
-        cols = user_df.columns.tolist()
-        x = st.selectbox("X-axis", cols)
-        y = st.selectbox("Y-axis", cols)
+    fig, ax = plt.subplots(figsize=(12, 6))
+    sns.heatmap(pivot_w, ax=ax)
+    ax.set_title("Worst Time by Weather (Speed Drop)")
+    st.pyplot(fig)
 
-        fig_temp = px.scatter(user_df, x=x, y=y, title=f"{x} vs {y}")
-        st.plotly_chart(fig_temp, use_container_width=True)
+# ============================
+# NEW — Worst Area by Incident Type
+# ============================
+st.header("🚨 Worst Area Analysis by Incident Type")
+
+if incident_col and area_col and speed_col:
+    pivot_i = df.pivot_table(
+        values=speed_col,
+        index=area_col,
+        columns=incident_col,
+        aggfunc="mean"
+    ).fillna(0)
+
+    fig, ax = plt.subplots(figsize=(12, 6))
+    sns.heatmap(pivot_i, ax=ax)
+    ax.set_title("Worst Area by Incident Type (Speed Drop)")
+    st.pyplot(fig)
+
+# ============================
+# Data Explorer
+# ============================
+st.header("📁 Data Explorer")
+st.dataframe(df)
