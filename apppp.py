@@ -162,7 +162,7 @@ if weather_col and speed_col:
 
     fig, ax = plt.subplots(figsize=(12, 6))
     sns.heatmap(pivot_w, ax=ax)
-    ax.set_title("Worst Time by Weather (Speed Drop)")
+    ax.set_title(" Weather (Speed Drop)")
     st.pyplot(fig)
 
 # ============================
@@ -180,7 +180,7 @@ if incident_col and area_col and speed_col:
 
     fig, ax = plt.subplots(figsize=(12, 6))
     sns.heatmap(pivot_i, ax=ax)
-    ax.set_title("Worst Area by Incident Type (Speed Drop)")
+    ax.set_title(" Incident Type (Speed Drop)")
     st.pyplot(fig)
 
 # ============================
